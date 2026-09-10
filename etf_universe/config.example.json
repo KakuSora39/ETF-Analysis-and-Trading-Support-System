@@ -1,0 +1,13 @@
+{
+  "liquidity_days": 20,
+  "min_avg_amount": 10000000,
+  "min_listing_days": 180,
+  "min_observation_days": 60,
+  "min_aum": 100000000,
+  "max_metadata_age_days": 120,
+  "correlation_days": 60,
+  "max_correlation": 0.98,
+  "momentum_days": 20,
+  "top_n": 3,
+  "volume_unit": null
+}
