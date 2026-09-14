@@ -1,11 +1,11 @@
 """019 ETF 日线数据同步 — 主程序入口。
 
-独立于 004_sequoia-x 项目，通过独立 cron 调度（交易日 20:00）。
+支持随时补齐历史缺口；交易日 20:00 前普通模式暂不写入当天日线。
 
 运行模式：
-  python main.py                    # 标准模式：ETF 列表 + 日线 + 指数（20:00 后）
+  python main.py                    # 标准模式：ETF 列表 + 日线 + 指数；历史缺口随时可补
   python main.py --sync-only        # 仅同步数据（跳过 ETF 列表更新）
-  python main.py --force            # 跳过交易日/时间门控检查
+  python main.py --force            # 15:30后允许检查当天日线
   python main.py --backfill         # 全量回填：从 start_date 起拉取所有 ETF
   python main.py --list-only        # 仅更新 ETF 列表
 """
@@ -35,7 +35,12 @@ from etf_sync.sync import ETFSync
 def _describe_etf_sync(result: dict) -> str:
     """Turn the sync status into an unambiguous user-facing summary."""
     if result.get("status") != "skipped":
-        return f"ETF 新增 {result.get('etf_count', 0)} 只"
+        target = result.get("target_date")
+        suffix = f"（截止 {target}）" if target else ""
+        return (
+            f"ETF 已同步 {result.get('etf_count', 0)} 只，"
+            f"写入 {result.get('record_count', 0)} 条{suffix}"
+        )
     if result.get("error") == "time gate":
         return "ETF 已跳过（未到同步时间）"
     if result.get("error") == "already current":
@@ -58,7 +63,7 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="强制模式：跳过交易日/时间门控检查",
+        help="强制模式：15:30后可检查当天日线；补历史缺口通常不需要",
     )
     parser.add_argument(
         "--backfill",

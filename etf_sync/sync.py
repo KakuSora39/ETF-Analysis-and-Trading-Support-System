@@ -108,25 +108,6 @@ class ETFSync:
     #  时间门控
     # ════════════════════════════════════════════════════════════
 
-    def _check_time_gate(self) -> bool:
-        """检查当前时间是否达到同步门控。
-
-        默认 20:00 后才允许执行同步。
-
-        Returns:
-            True = 达到或超过门控时间，可以同步。
-        """
-        now: datetime = datetime.now()
-        gate_hour: int = self.settings.sync_after_hour
-        gate_min: int = self.settings.sync_after_minute
-        if now.hour > gate_hour or (now.hour == gate_hour and now.minute >= gate_min):
-            return True
-        logger.info(
-            f"时间门控未到（{now.strftime('%H:%M')} < "
-            f"{gate_hour:02d}:{gate_min:02d}）"
-        )
-        return False
-
     def _latest_completed_trade_date(self, now: datetime | None = None) -> date:
         """Return the latest trading day whose regular session has ended.
 
@@ -140,6 +121,38 @@ class ETFSync:
         while not self.is_trade_day(candidate):
             candidate -= timedelta(days=1)
         return candidate
+
+    def _latest_safe_sync_date(self, now: datetime | None = None) -> date:
+        """返回普通同步在当前时刻允许写入的最近交易日。
+
+        20:00 门控只保护今天尚未稳定的日线，不能阻止补齐更早的缺口。
+        周末和节假日也可以补到最近一个交易日。
+        """
+        current = now or datetime.now()
+        candidate = current.date()
+        gate = dt_time(self.settings.sync_after_hour, self.settings.sync_after_minute)
+        if self.is_trade_day(candidate) and current.time() < gate:
+            candidate -= timedelta(days=1)
+        while not self.is_trade_day(candidate):
+            candidate -= timedelta(days=1)
+        return candidate
+
+    def _sync_target(self, force: bool, now: datetime | None = None) -> tuple[date, bool]:
+        """确定同步截止日，并解释为什么可能暂缓今天的日线。"""
+        current = now or datetime.now()
+        today_is_trade_day = self.is_trade_day(current.date())
+        target = self._latest_completed_trade_date(current) if force else self._latest_safe_sync_date(current)
+        if not force:
+            gate = dt_time(self.settings.sync_after_hour, self.settings.sync_after_minute)
+            if today_is_trade_day and current.time() < gate:
+                logger.info(
+                    f"今日行情时间门控未到（{current.strftime('%H:%M')} < "
+                    f"{gate.strftime('%H:%M')}），暂不写入今日K线；"
+                    f"仍会补齐历史缺口至 {target.isoformat()}"
+                )
+            elif not today_is_trade_day:
+                logger.info(f"当前为非交易日；仍会补齐历史缺口至 {target.isoformat()}")
+        return target, today_is_trade_day
 
     # ════════════════════════════════════════════════════════════
     #  Phase 1: ETF 列表同步
@@ -184,28 +197,15 @@ class ETFSync:
           3. 返回结果中携带各数据源使用统计（tencent_count / sina_count）
 
         Args:
-            force: 跳过交易日/时间门控检查。
+            force: 15:30 后允许把当天作为同步目标；补历史通常不需要。
             full_history: 回填模式；不使用最新交易日快速跳过。
 
         Returns:
             dict: {status, etf_count, tencent_count, sina_count, error}
         """
-        # ── 前置检查（非 force 模式） ──
-        if not force:
-            if not self.is_trade_day():
-                logger.info("sync_etf_daily: 非交易日，跳过")
-                return {
-                    "status": "skipped", "etf_count": 0,
-                    "tencent_count": 0, "sina_count": 0,
-                    "is_trade_day": False, "error": "",
-                }
-            if not self._check_time_gate():
-                logger.info("sync_etf_daily: 时间门控未到，跳过")
-                return {
-                    "status": "skipped", "etf_count": 0,
-                    "tencent_count": 0, "sina_count": 0,
-                    "is_trade_day": True, "error": "time gate",
-                }
+        # 时间门控只决定本次可写到哪一天，不再阻止补齐历史缺口。
+        target_date, today_is_trade_day = self._sync_target(force)
+        target_text = target_date.isoformat()
 
         # ── 获取待同步 ETF 列表 ──
         symbols: list[str] = self.engine.get_etf_list_symbols()
@@ -216,7 +216,7 @@ class ETFSync:
                 return {
                     "status": "error", "etf_count": 0,
                     "tencent_count": 0, "sina_count": 0,
-                    "is_trade_day": True, "error": "ETF 列表为空",
+                    "is_trade_day": today_is_trade_day, "error": "ETF 列表为空",
                 }
             symbols = list_result.get("new_listed", [])
             if not symbols:
@@ -227,7 +227,7 @@ class ETFSync:
             return {
                 "status": "skipped", "etf_count": 0,
                 "tencent_count": 0, "sina_count": 0,
-                "is_trade_day": True, "error": "no symbols",
+                "is_trade_day": today_is_trade_day, "error": "no symbols",
             }
 
         # ── 获取本地最新日期 ──
@@ -235,8 +235,6 @@ class ETFSync:
         logger.info(
             f"sync_etf_daily: 本地有 {len(last_dates)}/{len(symbols)} 只 ETF 的历史数据"
         )
-        target_date = self._latest_completed_trade_date()
-        target_text = target_date.isoformat()
         covered_count = sum(last_date >= target_text for last_date in last_dates.values())
         coverage_ratio = covered_count / len(symbols)
         if (
@@ -251,7 +249,7 @@ class ETFSync:
             return {
                 "status": "skipped", "etf_count": 0,
                 "tencent_count": 0, "sina_count": 0,
-                "is_trade_day": True, "error": "already current",
+                "is_trade_day": today_is_trade_day, "error": "already current",
                 "target_date": target_text, "coverage_count": covered_count,
                 "symbol_count": len(symbols),
             }
@@ -305,7 +303,7 @@ class ETFSync:
             src = self.tc_source.source_count
             logger.info(
                 f"ETF 扫描进度: [{processed}/{len(symbols)}] "
-                f"新增 {etf_count} 只, 写入 {total_new_records} 条, "
+                f"取得数据 {etf_count} 只, 写入 {total_new_records} 条, "
                 f"[腾讯{src['tencent']}/Sina{src['sina']}], {elapsed:.0f}s"
             )
 
@@ -343,6 +341,14 @@ class ETFSync:
                     consecutive_errors += 1
                     if consecutive_errors <= 3:
                         logger.debug(f"sync_etf_daily {sym}: 无数据")
+                    _log_progress(i + 1)
+                    continue
+
+                # 数据源可能返回今天的盘中或尚未稳定日线。门控前只写入
+                # 上一完整交易日；此前遗漏的历史日期仍可正常补齐。
+                df = df[df["date"].astype(str) <= target_text]
+                if df.empty:
+                    consecutive_errors = 0
                     _log_progress(i + 1)
                     continue
 
@@ -393,7 +399,9 @@ class ETFSync:
                 "etf_count": etf_count,
                 "tencent_count": src["tencent"],
                 "sina_count": src["sina"],
-                "is_trade_day": True,
+                "is_trade_day": today_is_trade_day,
+                "target_date": target_text,
+                "record_count": total_new_records,
                 "error": "",
             }
 
@@ -407,7 +415,9 @@ class ETFSync:
                 "etf_count": etf_count,
                 "tencent_count": src["tencent"],
                 "sina_count": src["sina"],
-                "is_trade_day": True,
+                "is_trade_day": today_is_trade_day,
+                "target_date": target_text,
+                "record_count": total_new_records,
                 "error": str(e),
             }
 
@@ -424,14 +434,13 @@ class ETFSync:
           - 563000（中证2000 ETF 代理，通过 TencentSource 取数据存入 index_daily）
 
         Args:
-            force: 跳过交易日检查。
+            force: 15:30 后允许把当天作为同步目标。
 
         Returns:
             dict: {status, index_count, error}
         """
-        if not force and not self.is_trade_day():
-            logger.info("sync_index_daily: 非交易日，跳过")
-            return {"status": "skipped", "index_count": 0, "error": ""}
+        target_date, _ = self._sync_target(force)
+        target_text = target_date.isoformat()
 
         conn: sqlite3.Connection = sqlite3.connect(self.settings.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -442,6 +451,9 @@ class ETFSync:
                 idx_type: str = info["type"]
                 idx_name: str = info["name"]
                 local_last: str | None = self.engine.get_index_last_date(code)
+                if local_last and local_last >= target_text:
+                    logger.info(f"sync_index_daily: {idx_name} 已覆盖 {target_text}，跳过")
+                    continue
 
                 if idx_type == "index":
                     sina_code: str = to_sina_code(code)
@@ -479,6 +491,12 @@ class ETFSync:
                     logger.warning(f"sync_index_daily: {idx_name}（{code}）无数据")
                     continue
 
+                # 普通同步在门控前不写入今天尚未稳定的指数日线。
+                df = df[df["date"].astype(str) <= target_text]
+                if df.empty:
+                    logger.info(f"sync_index_daily: {idx_name} 没有可写入的已完成日线")
+                    continue
+
                 # 过滤增量部分
                 if local_last:
                     df = df[df["date"] > local_last]
@@ -498,7 +516,7 @@ class ETFSync:
             conn.commit()
             conn.close()
             logger.info(f"指数日线同步完成: {index_count} 个（含 ETF 代理）")
-            return {"status": "ok", "index_count": index_count, "error": ""}
+            return {"status": "ok", "index_count": index_count, "target_date": target_text, "error": ""}
 
         except Exception as e:
             logger.error(f"sync_index_daily 异常: {e}")
