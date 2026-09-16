@@ -39,6 +39,30 @@ class SimBroker:
         self.commission_rate = commission_rate
         self.slippage = slippage
 
+    def quote_buy(self, price: float, budget: float, cash: float) -> TradeResult:
+        """??????????? 100 ??????????????"""
+        if price <= 0 or budget <= 0 or cash <= 0:
+            return TradeResult(success=False, reason="???????")
+        fill = price * (1 + self.slippage)
+        shares = int(min(budget, cash) // (fill * (1 + self.commission_rate)) // 100) * 100
+        if shares <= 0:
+            return TradeResult(success=False, reason="????")
+        amount = shares * fill
+        commission = amount * self.commission_rate
+        return TradeResult(shares=shares, price=round(fill, 4), amount=round(amount, 2),
+                           commission=round(commission, 2), net_cost=amount + commission)
+
+    def quote_sell(self, price: float, shares: int, cost_basis: float = 0.0) -> TradeResult:
+        """?????????????"""
+        if price <= 0 or shares <= 0 or shares % 100:
+            return TradeResult(success=False, reason="???????")
+        fill = price * (1 - self.slippage)
+        amount = shares * fill
+        commission = amount * self.commission_rate
+        return TradeResult(shares=shares, price=round(fill, 4), amount=round(amount, 2),
+                           commission=round(commission, 2), net_cost=amount - commission,
+                           pnl=amount - commission - cost_basis)
+
     def buy(
         self,
         state,

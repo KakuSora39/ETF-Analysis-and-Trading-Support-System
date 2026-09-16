@@ -270,6 +270,10 @@ def main(argv=None):
                     position_metrics, RiskConfig(),
                 )
                 lanes = build_lane_actions(risks, regime, args.min_buy_families, args.min_buy_mean_sharpe)
+                # Machine-readable signal snapshot for the separate forward paper accounts.
+                # Keep the existing Chinese user-facing CSV and report unchanged.
+                for lane, lane_frame in lanes.items():
+                    lane_frame.to_csv(output / f"paper_lanes_{lane}.csv", index=False, encoding="utf-8-sig")
                 if not holdings.empty:
                     holding_data, _, _ = load_strategy_market(
                         args.db, holdings.symbol.drop_duplicates().tolist(), as_of,

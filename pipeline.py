@@ -90,6 +90,18 @@ STEPS: list[dict] = [
         "required": True,
         "timeout": 10800,
     },
+    {
+        "id": "etf_universe",
+        "name": "ETF Universe 全市场分析",
+        "cmd": ["-m", "etf_universe", "--config", "data/action-test-config.json", "--output", "data/universe"],
+        "cwd": str(PROJECT_DIR), "required": True, "timeout": 7200,
+    },
+    {
+        "id": "etf_universe_paper",
+        "name": "ETF Universe 双账户模拟盘",
+        "cmd": ["-m", "simulation.etf_universe.daily", "--analysis-root", "data/universe"],
+        "cwd": str(PROJECT_DIR), "required": True, "timeout": 900,
+    },
     # ═══ 动量类策略（批量推送，BATCH_MODE=1） ═══
     {
         "id": "momentum_rotation",

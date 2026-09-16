@@ -1,0 +1,12 @@
+{
+  "initial_capital": 100000,
+  "commission_rate": 0.0002,
+  "slippage": 0.0001,
+  "max_symbol_weight": 0.25,
+  "max_positions": 4,
+  "probe_position_ratio": 0.2,
+  "confirmed_position_ratio": 0.6,
+  "max_position_ratio": 1.0,
+  "time_stop_days": 8,
+  "strategy_validation_refresh": "weekly"
+}

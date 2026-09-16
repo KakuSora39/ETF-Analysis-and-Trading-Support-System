@@ -102,6 +102,21 @@ class StateManager:
 
     # ── 初始化 ──
 
+    @staticmethod
+    def save_json_atomic(path: str | Path, payload: dict) -> None:
+        """????????????????????????"""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(suffix=".json", prefix=target.stem + "_", dir=target.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            os.replace(tmp, target)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+
     def init_new(self, initial_capital: float) -> SimState:
         """创建新的模拟盘状态。"""
         state = SimState(
