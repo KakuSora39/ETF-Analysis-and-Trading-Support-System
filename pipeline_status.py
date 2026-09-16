@@ -54,29 +54,31 @@ class PipelineStatus:
             self._data = {}
             return self._data
         try:
-            with open(self.status_path) as f:
+            with open(self.status_path, encoding="utf-8") as f:
                 raw = json.load(f)
             if raw.get("date") == self.today:
                 self._data = raw
             else:
                 self._data = {}
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeError):
             self._data = {}
         return self._data
 
     def save(self) -> None:
         """原子写入 JSON（临时文件 -> os.replace）。"""
+        self.status_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(
             suffix=".json",
             prefix="pipeline_status_",
             dir=self.status_path.parent,
         )
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             os.replace(tmp, self.status_path)
         except Exception:
-            os.unlink(tmp)
+            if os.path.exists(tmp):
+                os.unlink(tmp)
             raise
 
     # ── 生命周期 ──

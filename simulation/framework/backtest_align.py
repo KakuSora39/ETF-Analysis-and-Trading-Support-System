@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import date, timedelta
@@ -31,6 +32,10 @@ from pathlib import Path
 
 import pandas as pd
 import sqlite3
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -132,19 +137,22 @@ def run_backtest(sid: str, start: str, end: str, tag: str) -> pd.DataFrame | Non
         sys.executable, "-m", f"strategies.{sid}.run",
         "--start", start, "--end", end, "--tag", tag,
     ]
+    child_env = os.environ.copy()
+    child_env["PYTHONIOENCODING"] = "utf-8"
     try:
         proc = subprocess.run(
-            cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=600,
+            cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=child_env, timeout=600,
         )
     except subprocess.TimeoutExpired:
         print(f"  ⏰ {sid} 回测超时，跳过")
         return None
     if proc.returncode != 0:
-        print(f"  ❌ {sid} 回测失败:\n{proc.stderr[-500:]}")
+        print(f"  ❌ {sid} 回测失败:\n{(proc.stderr or '')[-500:]}")
         return None
     # 从 run.py 输出中找输出目录
     m = None
-    for line in proc.stdout.splitlines():
+    for line in (proc.stdout or "").splitlines():
         if "输出目录" in line:
             m = line.split(":", 1)[1].strip()
             break

@@ -24,8 +24,11 @@ from pathlib import Path
 
 # 强制 stdout/stderr 无缓冲，确保日志按时间顺序写入文件
 os.environ["PYTHONUNBUFFERED"] = "1"
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
+os.environ["PYTHONIOENCODING"] = "utf-8"
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 # ── 让 Python 能找到项目包 ──
 PROJECT_DIR: Path = Path(__file__).parent.resolve()
@@ -340,6 +343,8 @@ def main():
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             # 流式输出子进程日志
             stdout_lines = []
